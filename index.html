@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://telegram.org; style-src 'unsafe-inline'; connect-src 'none'; img-src data:">
+  <meta name="referrer" content="no-referrer">
+  <title>دخول Twist</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root { color-scheme: light dark; font-family: Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; padding: 24px 18px;
+      background: var(--tg-theme-bg-color, #ffffff);
+      color: var(--tg-theme-text-color, #111111);
+    }
+    main { max-width: 420px; margin: 0 auto; }
+    h1 { margin: 12px 0 8px; font-size: 24px; }
+    p { color: var(--tg-theme-hint-color, #666666); line-height: 1.6; }
+    label { display: block; margin: 28px 0 8px; font-weight: 700; }
+    input {
+      width: 100%; min-height: 52px; padding: 12px 14px;
+      border: 1px solid var(--tg-theme-hint-color, #999999);
+      border-radius: 10px; background: var(--tg-theme-secondary-bg-color, #f3f3f3);
+      color: var(--tg-theme-text-color, #111111); font-size: 18px;
+    }
+    button {
+      width: 100%; min-height: 52px; margin-top: 18px; border: 0;
+      border-radius: 10px; background: var(--tg-theme-button-color, #2481cc);
+      color: var(--tg-theme-button-text-color, #ffffff); font-size: 17px;
+      font-weight: 700;
+    }
+    button:disabled { opacity: .55; }
+    #status { min-height: 28px; margin-top: 14px; color: var(--tg-theme-hint-color, #666666); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>دخول حساب Twist</h1>
+  <p>الباسورد يتشفر داخل موبايلك قبل الإرسال.</p>
+  <form id="login-form">
+    <label for="password">الباسورد</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required autofocus>
+    <button id="submit" type="submit">تسجيل الدخول</button>
+  </form>
+  <p id="status" role="status"></p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const PUBLIC_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApjCf+LaIOPER9/vdv6cFfKkyaPj4mOLgfCSqZCg0kw/eDzQptEPf4umUJacniggQR7EZ1a1twUpyqSX8bjsBySdHjco6CK67yK02KM2QD0Agx+geqU2tiPnuNWqvh1YnesN990GbtdTw4hXjWF8I3QDJ0qJP8YcvwpyC38JanCAHA7AI4tsjn/leE47Fl4c/gW7FcmRN7BQ4cGES2gbBTc1pPF+Us2n15ZztlS+5khV9KdDm1eIn2E+UqNEyMmqlaX/hmmFOk0qMRYZVFsl56+ajlVpdhwqvOZf5UoXcPW++29823bss96LkF2JDNZjRRwZq/Ocn+7UIhKaltKMjsQIDAQAB';
+  const params = new URLSearchParams(location.search);
+  const challenge = params.get('challenge') || '';
+  const accountId = params.get('account') || '';
+  const telegram = window.Telegram && window.Telegram.WebApp;
+  const form = document.getElementById('login-form');
+  const password = document.getElementById('password');
+  const submit = document.getElementById('submit');
+  const status = document.getElementById('status');
+
+  function bytesToBase64(bytes) {
+    let binary = '';
+    for (const value of bytes) binary += String.fromCharCode(value);
+    return btoa(binary);
+  }
+
+  function base64ToBytes(value) {
+    const binary = atob(value);
+    return Uint8Array.from(binary, char => char.charCodeAt(0));
+  }
+
+  async function encryptPayload(payload) {
+    const publicKey = await crypto.subtle.importKey(
+      'spki', base64ToBytes(PUBLIC_KEY),
+      { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']
+    );
+    const aesKey = await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 }, true, ['encrypt']
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const rawKey = new Uint8Array(await crypto.subtle.exportKey('raw', aesKey));
+    const clear = new TextEncoder().encode(JSON.stringify(payload));
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv }, aesKey, clear
+    ));
+    const wrapped = new Uint8Array(await crypto.subtle.encrypt(
+      { name: 'RSA-OAEP' }, publicKey, rawKey
+    ));
+    return {
+      key: bytesToBase64(wrapped),
+      iv: bytesToBase64(iv),
+      ciphertext: bytesToBase64(ciphertext)
+    };
+  }
+
+  if (!telegram || !challenge || !/^\d+$/.test(accountId)) {
+    form.hidden = true;
+    status.textContent = 'افتح الصفحة من زر دخول الإيميل داخل البوت.';
+    return;
+  }
+
+  telegram.ready();
+  telegram.expand();
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!password.value) return;
+    submit.disabled = true;
+    status.textContent = 'جاري تشفير الباسورد...';
+    try {
+      const envelope = await encryptPayload({
+        challenge,
+        account: Number(accountId),
+        password: password.value
+      });
+      password.value = '';
+      telegram.sendData(JSON.stringify(envelope));
+      status.textContent = 'تم الإرسال. ارجع للبوت.';
+      setTimeout(() => telegram.close(), 400);
+    } catch (_) {
+      status.textContent = 'تعذر التشفير. اقفل الصفحة وجرب تاني.';
+      submit.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
