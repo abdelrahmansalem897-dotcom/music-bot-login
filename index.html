@@ -37,8 +37,8 @@
 </head>
 <body>
 <main>
-  <h1>دخول حساب Twist</h1>
-  <p>الباسورد يتشفر داخل موبايلك قبل الإرسال.</p>
+  <h1 id="title">دخول حساب Twist</h1>
+  <p id="intro">الباسورد يتشفر داخل موبايلك قبل الإرسال.</p>
   <form id="login-form">
     <label for="password">الباسورد</label>
     <input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required autofocus>
@@ -53,6 +53,8 @@
   const params = new URLSearchParams(location.search);
   const challenge = params.get('challenge') || '';
   const accountId = params.get('account') || '';
+  // mode=register is the admin email test: no account, and the encrypted payload carries mode 'register'.
+  const registerMode = params.get('mode') === 'register';
   const telegram = window.Telegram && window.Telegram.WebApp;
   const form = document.getElementById('login-form');
   const password = document.getElementById('password');
@@ -94,10 +96,17 @@
     };
   }
 
-  if (!telegram || !challenge || !/^\d+$/.test(accountId)) {
+  if (!telegram || !challenge || (!registerMode && !/^\d+$/.test(accountId))) {
     form.hidden = true;
     status.textContent = 'افتح الصفحة من زر دخول الإيميل داخل البوت.';
     return;
+  }
+
+  if (registerMode) {
+    document.title = 'تجربة إنشاء إيميل (TEST)';
+    document.getElementById('title').textContent = 'تجربة إنشاء إيميل (TEST)';
+    document.getElementById('intro').textContent = 'ده اختبار. الباسورد يتشفر داخل موبايلك ويتبعت للتسجيل بس، ومش بيتحفظ.';
+    submit.textContent = 'إنشاء الإيميل';
   }
 
   telegram.ready();
@@ -108,11 +117,10 @@
     submit.disabled = true;
     status.textContent = 'جاري تشفير الباسورد...';
     try {
-      const envelope = await encryptPayload({
-        challenge,
-        account: Number(accountId),
-        password: password.value
-      });
+      const clear = registerMode
+        ? { challenge, mode: 'register', password: password.value }
+        : { challenge, account: Number(accountId), password: password.value };
+      const envelope = await encryptPayload(clear);
       password.value = '';
       telegram.sendData(JSON.stringify(envelope));
       status.textContent = 'تم الإرسال. ارجع للبوت.';
