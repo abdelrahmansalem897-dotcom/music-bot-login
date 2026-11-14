@@ -53,8 +53,12 @@
   const params = new URLSearchParams(location.search);
   const challenge = params.get('challenge') || '';
   const accountId = params.get('account') || '';
-  // mode=register is the admin email test: no account, and the encrypted payload carries mode 'register'.
-  const registerMode = params.get('mode') === 'register';
+  // mode=register is the admin email test and mode=create makes a permanent email account.
+  // Neither needs an account, and the encrypted payload carries the same mode value.
+  const mode = params.get('mode') || '';
+  const registerMode = mode === 'register';
+  const createMode = mode === 'create';
+  const noAccountMode = registerMode || createMode;
   const telegram = window.Telegram && window.Telegram.WebApp;
   const form = document.getElementById('login-form');
   const password = document.getElementById('password');
@@ -96,7 +100,7 @@
     };
   }
 
-  if (!telegram || !challenge || (!registerMode && !/^\d+$/.test(accountId))) {
+  if (!telegram || !challenge || (!noAccountMode && !/^\d+$/.test(accountId))) {
     form.hidden = true;
     status.textContent = 'افتح الصفحة من زر دخول الإيميل داخل البوت.';
     return;
@@ -109,6 +113,13 @@
     submit.textContent = 'إنشاء الإيميل';
   }
 
+  if (createMode) {
+    document.title = 'إنشاء حساب إيميل';
+    document.getElementById('title').textContent = 'إنشاء حساب إيميل';
+    document.getElementById('intro').textContent = 'الباسورد يتشفر داخل موبايلك قبل الإرسال، ويتحفظ مشفر بعد التسجيل.';
+    submit.textContent = 'إنشاء الحساب';
+  }
+
   telegram.ready();
   telegram.expand();
   form.addEventListener('submit', async event => {
@@ -117,8 +128,8 @@
     submit.disabled = true;
     status.textContent = 'جاري تشفير الباسورد...';
     try {
-      const clear = registerMode
-        ? { challenge, mode: 'register', password: password.value }
+      const clear = noAccountMode
+        ? { challenge, mode, password: password.value }
         : { challenge, account: Number(accountId), password: password.value };
       const envelope = await encryptPayload(clear);
       password.value = '';
