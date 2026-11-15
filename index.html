@@ -6,7 +6,6 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://telegram.org; style-src 'unsafe-inline'; connect-src 'none'; img-src data:">
   <meta name="referrer" content="no-referrer">
   <title>دخول Twist</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root { color-scheme: light dark; font-family: Arial, sans-serif; }
     * { box-sizing: border-box; }
@@ -17,7 +16,11 @@
     }
     main { max-width: 420px; margin: 0 auto; }
     h1 { margin: 12px 0 8px; font-size: 24px; }
-    p { color: var(--tg-theme-hint-color, #666666); line-height: 1.6; }
+    h2 { margin: 24px 0 12px; font-size: 19px; }
+    p { color: var(--tg-theme-hint-color, #666666); line-height: 1.6; margin: 12px 0; }
+    ol { color: var(--tg-theme-hint-color, #666666); line-height: 1.6; padding-right: 20px; }
+    li { margin: 8px 0; }
+    code { background: var(--tg-theme-secondary-bg-color, #f3f3f3); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 13px; white-space: nowrap; }
     label { display: block; margin: 28px 0 8px; font-weight: 700; }
     input {
       width: 100%; min-height: 52px; padding: 12px 14px;
@@ -39,6 +42,8 @@
     }
     button:disabled { opacity: .55; }
     #status { min-height: 28px; margin-top: 14px; color: var(--tg-theme-hint-color, #666666); }
+    #bookmarklet-code { word-break: break-all; user-select: all; }
+    #result-display { word-break: break-all; user-select: all; font-size: 14px; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -57,6 +62,31 @@
     <textarea id="import-text" name="import-text" rows="8" spellcheck="false" autocomplete="off"></textarea>
     <button id="import-submit" type="submit">تشفير وتنزيل الملف</button>
   </form>
+  <div id="google-setup" hidden>
+    <h2>إضافة حساب Google</h2>
+    <p>من موبايل Chrome فقط:</p>
+    <ol>
+      <li>اضغط <strong>نسخ كود الـ Bookmarklet</strong> تحت</li>
+      <li>اضغط <strong>★</strong> (نجمة) عشان تعمل Bookmark عادي للصفحة دي</li>
+      <li>ادخل على Bookmarks (☰ → Bookmarks)</li>
+      <li>اضغط على الـ Bookmark اللي عملته دلوقتي</li>
+      <li>غيّر اسمه لـ <code>إضافة Twist للبوت</code></li>
+      <li>امسح الرابط الموجود كله واستبدله باللي نسخته في الخطوة 1</li>
+      <li>احفظ</li>
+      <li>اضغط <strong>فتح تسجيل Google في Twist</strong> تحت</li>
+      <li>اكتب اسم الـ Bookmark في شريط العنوان (<code>إضافة Twist للبوت</code>) واضغط عليه من القايمة</li>
+    </ol>
+    <button id="copy-bookmarklet" type="button">نسخ كود الـ Bookmarklet</button>
+    <button id="open-twist" type="button">فتح تسجيل Google في Twist</button>
+    <p id="bookmarklet-code" hidden></p>
+  </div>
+  <div id="google-return" hidden>
+    <h2>إضافة حساب Google</h2>
+    <p>تم استلام البيانات. جاري التشفير...</p>
+    <p id="result-display"></p>
+    <button id="copy-result" type="button" hidden>نسخ</button>
+    <button id="share-result" type="button" hidden>مشاركة</button>
+  </div>
   <p id="status" role="status"></p>
 </main>
 <script>
@@ -66,15 +96,22 @@
   const params = new URLSearchParams(location.search);
   const challenge = params.get('challenge') || '';
   const accountId = params.get('account') || '';
-  // mode=register is the admin email test and mode=create makes a permanent email account.
-  // Neither needs an account, and the encrypted payload carries the same mode value.
   const mode = params.get('mode') || '';
+  let googlePayload = null;
+  if (mode === 'google-return' && location.hash.startsWith('#google=')) {
+    try {
+      const fragment = location.hash.slice(8);
+      history.replaceState(null, '', location.pathname + location.search);
+      googlePayload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(fragment.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((3 - fragment.length % 4) % 4)), c => c.charCodeAt(0))));
+    } catch (_) {}
+  }
   const registerMode = mode === 'register';
   const createMode = mode === 'create';
-  // mode=import builds an encrypted file for the bot to import; it never sends form data itself.
   const importMode = mode === 'import';
-  const noAccountMode = registerMode || createMode || importMode;
-  const telegram = window.Telegram && window.Telegram.WebApp;
+  const googleSetupMode = mode === 'google-setup';
+  const googleReturnMode = mode === 'google-return';
+  const noAccountMode = registerMode || createMode || importMode || googleSetupMode || googleReturnMode;
+  let telegram = null;
   const form = document.getElementById('login-form');
   const password = document.getElementById('password');
   const submit = document.getElementById('submit');
@@ -82,6 +119,13 @@
   const importFile = document.getElementById('import-file');
   const importText = document.getElementById('import-text');
   const importSubmit = document.getElementById('import-submit');
+  const googleSetupDiv = document.getElementById('google-setup');
+  const copyBookmarkletBtn = document.getElementById('copy-bookmarklet');
+  const bookmarkletCode = document.getElementById('bookmarklet-code');
+  const googleReturnDiv = document.getElementById('google-return');
+  const resultDisplay = document.getElementById('result-display');
+  const copyResultBtn = document.getElementById('copy-result');
+  const shareResultBtn = document.getElementById('share-result');
   const status = document.getElementById('status');
 
   function bytesToBase64(bytes) {
@@ -93,6 +137,15 @@
   function base64ToBytes(value) {
     const binary = atob(value);
     return Uint8Array.from(binary, char => char.charCodeAt(0));
+  }
+
+  function base64UrlDecode(value) {
+    const padding = '==='.slice((3 - value.length % 4) % 4);
+    return atob(value.replace(/-/g, '+').replace(/_/g, '/') + padding);
+  }
+
+  function base64UrlEncode(bytes) {
+    return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
   }
 
   async function encryptPayload(payload) {
@@ -119,153 +172,229 @@
     };
   }
 
-  if (!telegram || !challenge || (!noAccountMode && !/^\d+$/.test(accountId))) {
-    form.hidden = true;
-    status.textContent = 'افتح الصفحة من زر دخول الإيميل داخل البوت.';
-    return;
+  function isUuidV4(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   }
 
-  if (registerMode) {
-    document.title = 'تجربة إنشاء إيميل (TEST)';
-    document.getElementById('title').textContent = 'تجربة إنشاء إيميل (TEST)';
-    document.getElementById('intro').textContent = 'ده اختبار. الباسورد يتشفر داخل موبايلك ويتبعت للتسجيل بس، ومش بيتحفظ.';
-    submit.textContent = 'إنشاء الإيميل';
+  function runWhenReady(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn, { once: true });
+    } else {
+      fn();
+    }
   }
 
-  if (createMode) {
-    document.title = 'إنشاء حساب إيميل';
-    document.getElementById('title').textContent = 'إنشاء حساب إيميل';
-    document.getElementById('intro').textContent = 'الباسورد يتشفر داخل موبايلك قبل الإرسال، ويتحفظ مشفر بعد التسجيل.';
-    submit.textContent = 'إنشاء الحساب';
-  }
-
-  if (importMode) {
-    form.hidden = true;
-    importForm.hidden = false;
-    document.title = 'استيراد حسابات Twist';
-    document.getElementById('title').textContent = 'استيراد حسابات Twist';
-    document.getElementById('intro').textContent = 'الملف بيتشفر داخل موبايلك. لو صغير بيتبعت للبوت مباشرة، ولو كبير بيتنزل وتحتاج ترفعه في البوت. الـ JSON الأصلي مش بيتبعت ولا بيتحفظ.';
-  }
-
-  telegram.ready();
-  telegram.expand();
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!password.value) return;
-    submit.disabled = true;
-    status.textContent = 'جاري تشفير الباسورد...';
-    try {
-      const clear = noAccountMode
-        ? { challenge, mode, password: password.value }
-        : { challenge, account: Number(accountId), password: password.value };
-      const envelope = await encryptPayload(clear);
-      password.value = '';
-      telegram.sendData(JSON.stringify(envelope));
-      status.textContent = 'تم الإرسال. ارجع للبوت.';
-      setTimeout(() => telegram.close(), 400);
-    } catch (_) {
-      status.textContent = 'تعذر التشفير. اقفل الصفحة وجرب تاني.';
-      submit.disabled = false;
+  function init() {
+    if (!telegram || !challenge || (!noAccountMode && !/^\d+$/.test(accountId))) {
+      form.hidden = true;
+      status.textContent = 'افتح الصفحة من زر دخول الإيميل داخل البوت.';
+      return;
     }
-  });
-
-  if (importMode) {
-    const MAX_INPUT_BYTES = 1024 * 1024;
-    // Telegram sendData rejects data over 4096 bytes; 4000 leaves a small margin.
-    const MAX_SENDDATA_BYTES = 4000;
-    const MAX_PASSWORD_CHARS = 256;
-    const MAX_CODE_CHARS = 4096;
-    const IMPORT_SCHEMA = 'twist-registration-import-v1';
-    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-    // Error messages name the account number and the field only. Values are never echoed,
-    // and JSON.parse errors are replaced by a fixed text because V8 quotes input in them.
-    function checkAccounts(data) {
-      const list = Array.isArray(data) ? data : (data && Array.isArray(data.accounts) ? data.accounts : null);
-      if (!list || list.length === 0) throw new Error('الملف لازم يحتوي قائمة حسابات فيها حساب واحد على الأقل.');
-      const emails = new Set();
-      return list.map((entry, index) => {
-        const where = 'الحساب رقم ' + (index + 1) + ': ';
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(where + 'لازم يكون كائن.');
-        if (entry.schema !== IMPORT_SCHEMA) throw new Error(where + 'الـ schema مش مظبوط.');
-        for (const field of ['email', 'password', 'deviceId', 'tgDeviceId', 'passwordlessLoginCode']) {
-          if (typeof entry[field] !== 'string' || entry[field] === '') throw new Error(where + 'الحقل ' + field + ' ناقص.');
-        }
-        if (!EMAIL_RE.test(entry.email)) throw new Error(where + 'الإيميل مش صحيح.');
-        const emailKey = entry.email.toLowerCase();
-        if (emails.has(emailKey)) throw new Error(where + 'الإيميل ده مكرر في الملف.');
-        emails.add(emailKey);
-        if (entry.password.length > MAX_PASSWORD_CHARS) throw new Error(where + 'الباسورد أطول من 256 حرف.');
-        if (!UUID_V4_RE.test(entry.deviceId)) throw new Error(where + 'الحقل deviceId مش UUID v4 صحيح.');
-        if (!UUID_V4_RE.test(entry.tgDeviceId)) throw new Error(where + 'الحقل tgDeviceId مش UUID v4 صحيح.');
-        if (entry.passwordlessLoginCode.length > MAX_CODE_CHARS) throw new Error(where + 'الكود أطول من 4096 حرف.');
-        return {
-          schema: IMPORT_SCHEMA,
-          email: entry.email,
-          password: entry.password,
-          deviceId: entry.deviceId,
-          tgDeviceId: entry.tgDeviceId,
-          passwordlessLoginCode: entry.passwordlessLoginCode
-        };
-      });
+    if (registerMode) {
+      document.title = 'تجربة إنشاء إيميل (TEST)';
+      document.getElementById('title').textContent = 'تجربة إنشاء إيميل (TEST)';
+      document.getElementById('intro').textContent = 'ده اختبار. الباسورد يتشفر داخل موبايلك ويتبعت للتسجيل بس، ومش بيتحفظ.';
+      submit.textContent = 'إنشاء الإيميل';
     }
-
-    async function readImportInput(file, pasted) {
-      if (file && file.size > MAX_INPUT_BYTES) throw new Error('الملف أكبر من 1 ميجا.');
-      const raw = file ? await file.text() : pasted;
-      if (new TextEncoder().encode(raw).byteLength > MAX_INPUT_BYTES) throw new Error('الإدخال أكبر من 1 ميجا.');
-      let data;
-      try {
-        data = JSON.parse(raw);
-      } catch (_) {
-        throw new Error('الـ JSON مش صالح.');
-      }
-      return checkAccounts(data);
+    if (createMode) {
+      document.title = 'إنشاء حساب إيميل';
+      document.getElementById('title').textContent = 'إنشاء حساب إيميل';
+      document.getElementById('intro').textContent = 'الباسورد يتشفر داخل موبايلك قبل الإرسال، ويتحفظ مشفر بعد التسجيل.';
+      submit.textContent = 'إنشاء الحساب';
     }
-
-    function downloadEnvelope(json) {
-      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'twist-import-encrypted.json';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (importMode) {
+      form.hidden = true;
+      importForm.hidden = false;
+      document.title = 'استيراد حسابات Twist';
+      document.getElementById('title').textContent = 'استيراد حسابات Twist';
+      document.getElementById('intro').textContent = 'الملف بيتشفر داخل موبايلك. لو صغير بيتبعت للبوت مباشرة، ولو كبير بيتنزل وتحتاج ترفعه في البوت. الـ JSON الأصلي مش بيتبعت ولا بيتحفظ.';
     }
-
-    importForm.addEventListener('submit', async event => {
+    telegram.ready();
+    telegram.expand();
+    form.addEventListener('submit', async event => {
       event.preventDefault();
-      const file = importFile.files && importFile.files[0];
-      const pasted = importText.value;
-      importText.value = '';
-      importFile.value = '';
-      importSubmit.disabled = true;
-      status.textContent = 'جاري التحقق...';
-      let accounts;
+      if (!password.value) return;
+      submit.disabled = true;
+      status.textContent = 'جاري تشفير الباسورد...';
       try {
-        accounts = await readImportInput(file, pasted);
-      } catch (error) {
-        status.textContent = error.message;
-        importSubmit.disabled = false;
-        return;
-      }
-      status.textContent = 'جاري تشفير الملف...';
-      try {
-        const envelopeJson = JSON.stringify(await encryptPayload({ challenge, mode: 'import', accounts }));
-        if (new TextEncoder().encode(envelopeJson).byteLength <= MAX_SENDDATA_BYTES) {
-          telegram.sendData(envelopeJson);
-          status.textContent = 'تم الإرسال. ارجع للبوت.';
-          setTimeout(() => telegram.close(), 400);
-        } else {
-          downloadEnvelope(envelopeJson);
-          status.textContent = 'تم تنزيل twist-import-encrypted.json. ارفعه في البوت عشان يتسجل.';
-        }
+        const clear = noAccountMode
+          ? { challenge, mode, password: password.value }
+          : { challenge, account: Number(accountId), password: password.value };
+        const envelope = await encryptPayload(clear);
+        password.value = '';
+        telegram.sendData(JSON.stringify(envelope));
+        status.textContent = 'تم الإرسال. ارجع للبوت.';
+        setTimeout(() => telegram.close(), 400);
       } catch (_) {
         status.textContent = 'تعذر التشفير. اقفل الصفحة وجرب تاني.';
+        submit.disabled = false;
       }
-      importSubmit.disabled = false;
+    });
+    if (importMode) {
+      const MAX_INPUT_BYTES = 1024 * 1024;
+      const MAX_SENDDATA_BYTES = 4000;
+      const MAX_PASSWORD_CHARS = 256;
+      const MAX_CODE_CHARS = 4096;
+      const IMPORT_SCHEMA = 'twist-registration-import-v1';
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      function checkAccounts(data) {
+        const list = Array.isArray(data) ? data : (data && Array.isArray(data.accounts) ? data.accounts : null);
+        if (!list || list.length === 0) throw new Error('الملف لازم يحتوي قائمة حسابات فيها حساب واحد على الأقل.');
+        const emails = new Set();
+        return list.map((entry, index) => {
+          const where = 'الحساب رقم ' + (index + 1) + ': ';
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(where + 'لازم يكون كائن.');
+          if (entry.schema !== IMPORT_SCHEMA) throw new Error(where + 'الـ schema مش مظبوط.');
+          for (const field of ['email', 'password', 'deviceId', 'tgDeviceId', 'passwordlessLoginCode']) {
+            if (typeof entry[field] !== 'string' || entry[field] === '') throw new Error(where + 'الحقل ' + field + ' ناقص.');
+          }
+          if (!EMAIL_RE.test(entry.email)) throw new Error(where + 'الإيميل مش صحيح.');
+          const emailKey = entry.email.toLowerCase();
+          if (emails.has(emailKey)) throw new Error(where + 'الإيميل ده مكرر في الملف.');
+          emails.add(emailKey);
+          if (entry.password.length > MAX_PASSWORD_CHARS) throw new Error(where + 'الباسورد أطول من 256 حرف.');
+          if (!isUuidV4(entry.deviceId)) throw new Error(where + 'الحقل deviceId مش UUID v4 صحيح.');
+          if (!isUuidV4(entry.tgDeviceId)) throw new Error(where + 'الحقل tgDeviceId مش UUID v4 صحيح.');
+          if (entry.passwordlessLoginCode.length > MAX_CODE_CHARS) throw new Error(where + 'الكود أطول من 4096 حرف.');
+          return {
+            schema: IMPORT_SCHEMA,
+            email: entry.email,
+            password: entry.password,
+            deviceId: entry.deviceId,
+            tgDeviceId: entry.tgDeviceId,
+            passwordlessLoginCode: entry.passwordlessLoginCode
+          };
+        });
+      }
+      async function readImportInput(file, pasted) {
+        if (file && file.size > MAX_INPUT_BYTES) throw new Error('الملف أكبر من 1 ميجا.');
+        const raw = file ? await file.text() : pasted;
+        if (new TextEncoder().encode(raw).byteLength > MAX_INPUT_BYTES) throw new Error('الإدخال أكبر من 1 ميجا.');
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch (_) {
+          throw new Error('الـ JSON مش صالح.');
+        }
+        return checkAccounts(data);
+      }
+      function downloadEnvelope(json) {
+        const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'twist-import-encrypted.json';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }
+      importForm.addEventListener('submit', async event => {
+        event.preventDefault();
+        const file = importFile.files && importFile.files[0];
+        const pasted = importText.value;
+        importText.value = '';
+        importFile.value = '';
+        importSubmit.disabled = true;
+        status.textContent = 'جاري التحقق...';
+        let accounts;
+        try {
+          accounts = await readImportInput(file, pasted);
+        } catch (error) {
+          status.textContent = error.message;
+          importSubmit.disabled = false;
+          return;
+        }
+        status.textContent = 'جاري تشفير الملف...';
+        try {
+          const envelopeJson = JSON.stringify(await encryptPayload({ challenge, mode: 'import', accounts }));
+          if (new TextEncoder().encode(envelopeJson).byteLength <= MAX_SENDDATA_BYTES) {
+            telegram.sendData(envelopeJson);
+            status.textContent = 'تم الإرسال. ارجع للبوت.';
+            setTimeout(() => telegram.close(), 400);
+          } else {
+            downloadEnvelope(envelopeJson);
+            status.textContent = 'تم تنزيل twist-import-encrypted.json. ارفعه في البوت عشان يتسجل.';
+          }
+        } catch (_) {
+          status.textContent = 'تعذر التشفير. اقفل الصفحة وجرب تاني.';
+        }
+        importSubmit.disabled = false;
+      });
+    }
+  }
+
+  if (googleSetupMode) {
+    form.hidden = true;
+    googleSetupDiv.hidden = false;
+    document.title = 'إضافة حساب Google';
+    document.getElementById('title').textContent = 'إضافة حساب Google';
+    document.getElementById('intro').textContent = 'استخدم Bookmarklet على موبايل Chrome';
+    const RETURN_URL = location.origin + location.pathname + '?mode=google-return';
+    const TWIST_GOOGLE_URL = 'https://account.twistmena.com/';
+    const bookmarkletSrc = `javascript:(async()=>{if(location.origin!=='https://account.twistmena.com'){alert('افتح موقع Twist الأول');return}const t=localStorage.getItem('userToken');if(!t){alert('سجل دخول Google في Twist الأول');return}try{let s=t.split('.')[1];if(!s)throw new Error;s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);const p=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s),c=>c.charCodeAt(0))));const e=p.email;if(typeof e!=='string'||!e.includes('@')||e.length>320)throw new Error;const r=await fetch('https://api.twistmena.com/account/passwordless-auth/request-code',{headers:{Authorization:'Bearer '+t}});if(!r.ok)throw new Error;const d=await r.json();const c=typeof d==='string'?d:(typeof d.data==='string'?d.data:(d.data&&d.data.code)||d.code);if(typeof c!=='string'||!c||c.length>4096)throw new Error;const u=()=>crypto.randomUUID?crypto.randomUUID():([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,x=>(x^crypto.getRandomValues(new Uint8Array(1))[0]&15>>x/4).toString(16));const j=JSON.stringify({mode:'google',schema:'twist-google-import-v1',email:e,passwordlessLoginCode:c,deviceId:u(),tgDeviceId:u()});const b=btoa(String.fromCharCode(...new TextEncoder().encode(j))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,'');location.href=${JSON.stringify(RETURN_URL)}+'#google='+b}catch(_){alert('تعذر تجهيز الحساب. جرّب تاني')}})()`;
+    bookmarkletCode.textContent = bookmarkletSrc;
+    const openTwistBtn = document.getElementById('open-twist');
+    copyBookmarkletBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(bookmarkletSrc).then(() => {
+        status.textContent = 'تم النسخ';
+      }).catch(() => {
+        bookmarkletCode.hidden = false;
+        status.textContent = 'انسخ الكود يدوياً';
+      });
+    });
+    openTwistBtn.addEventListener('click', () => {
+      window.open(TWIST_GOOGLE_URL, '_blank');
+    });
+  } else if (googleReturnMode) {
+    form.hidden = true;
+    googleReturnDiv.hidden = false;
+    document.title = 'إضافة حساب Google';
+    document.getElementById('title').textContent = 'إضافة حساب Google';
+    document.getElementById('intro').textContent = '';
+    if (!googlePayload || googlePayload.mode !== 'google' || googlePayload.schema !== 'twist-google-import-v1' || typeof googlePayload.email !== 'string' || googlePayload.email.length === 0 || googlePayload.email.length > 320 || typeof googlePayload.passwordlessLoginCode !== 'string' || googlePayload.passwordlessLoginCode.length === 0 || googlePayload.passwordlessLoginCode.length > 4096 || !isUuidV4(googlePayload.deviceId) || !isUuidV4(googlePayload.tgDeviceId)) {
+      status.textContent = 'البيانات المستلمة غير صالحة';
+    } else {
+      (async () => {
+        try {
+          const envelope = await encryptPayload({ mode: 'google', schema: 'twist-google-import-v1', email: googlePayload.email, passwordlessLoginCode: googlePayload.passwordlessLoginCode, deviceId: googlePayload.deviceId, tgDeviceId: googlePayload.tgDeviceId });
+          googlePayload = null;
+          const result = 'TWIST-GOOGLE:' + JSON.stringify(envelope);
+          resultDisplay.textContent = result;
+          copyResultBtn.hidden = false;
+          shareResultBtn.hidden = false;
+          status.textContent = 'تم التشفير. انسخ الكود وابعته للبوت.';
+          copyResultBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(result).then(() => {
+              status.textContent = 'تم النسخ';
+            }).catch(() => {
+              status.textContent = 'فشل النسخ. انسخ يدوياً';
+            });
+          });
+          if (navigator.share) {
+            shareResultBtn.addEventListener('click', () => {
+              navigator.share({ text: result }).catch(() => {});
+            });
+          } else {
+            shareResultBtn.hidden = true;
+          }
+        } catch {
+          status.textContent = 'تعذر التشفير';
+        }
+      })();
+    }
+  } else {
+    runWhenReady(() => {
+      const script = document.createElement('script');
+      script.src = 'https://telegram.org/js/telegram-web-app.js';
+      script.onerror = () => {
+        form.hidden = true;
+        status.textContent = 'تعذر تحميل Telegram SDK';
+      };
+      script.onload = () => {
+        telegram = window.Telegram && window.Telegram.WebApp;
+        init();
+      };
+      document.head.appendChild(script);
     });
   }
 })();
