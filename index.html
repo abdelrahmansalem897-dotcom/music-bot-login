@@ -16,11 +16,7 @@
     }
     main { max-width: 420px; margin: 0 auto; }
     h1 { margin: 12px 0 8px; font-size: 24px; }
-    h2 { margin: 24px 0 12px; font-size: 19px; }
     p { color: var(--tg-theme-hint-color, #666666); line-height: 1.6; margin: 12px 0; }
-    ol { color: var(--tg-theme-hint-color, #666666); line-height: 1.6; padding-right: 20px; }
-    li { margin: 8px 0; }
-    code { background: var(--tg-theme-secondary-bg-color, #f3f3f3); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 13px; white-space: nowrap; }
     label { display: block; margin: 28px 0 8px; font-weight: 700; }
     input {
       width: 100%; min-height: 52px; padding: 12px 14px;
@@ -42,8 +38,6 @@
     }
     button:disabled { opacity: .55; }
     #status { min-height: 28px; margin-top: 14px; color: var(--tg-theme-hint-color, #666666); }
-    #bookmarklet-code { word-break: break-all; user-select: all; }
-    #result-display { word-break: break-all; user-select: all; font-size: 14px; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -69,61 +63,21 @@
     <textarea id="import-text" name="import-text" rows="8" spellcheck="false" autocomplete="off"></textarea>
     <button id="import-submit" type="submit">تشفير وتنزيل الملف</button>
   </form>
-  <div id="google-setup" hidden>
-    <h2>إضافة حساب Google</h2>
-    <p>من موبايل Chrome فقط:</p>
-    <ol>
-      <li>اضغط <strong>نسخ كود الـ Bookmarklet</strong> تحت</li>
-      <li>اضغط <strong>★</strong> (نجمة) عشان تعمل Bookmark عادي للصفحة دي</li>
-      <li>ادخل على Bookmarks (☰ → Bookmarks)</li>
-      <li>اضغط على الـ Bookmark اللي عملته دلوقتي</li>
-      <li>غيّر اسمه لـ <code>إضافة Twist للبوت</code></li>
-      <li>امسح الرابط الموجود كله واستبدله باللي نسخته في الخطوة 1</li>
-      <li>احفظ</li>
-      <li>اضغط <strong>فتح تسجيل Google في Twist</strong> تحت</li>
-      <li>اكتب اسم الـ Bookmark في شريط العنوان (<code>إضافة Twist للبوت</code>) واضغط عليه من القايمة</li>
-    </ol>
-    <button id="copy-bookmarklet" type="button">نسخ كود الـ Bookmarklet</button>
-    <button id="open-twist" type="button">فتح تسجيل Google في Twist</button>
-    <p id="bookmarklet-code" hidden></p>
-  </div>
-  <div id="google-return" hidden>
-    <h2>إضافة حساب Google</h2>
-    <p>تم استلام البيانات. جاري التشفير...</p>
-    <p id="result-display"></p>
-    <button id="copy-result" type="button" hidden>نسخ</button>
-    <button id="share-result" type="button" hidden>مشاركة</button>
-  </div>
   <p id="status" role="status"></p>
 </main>
 <script>
 (() => {
   'use strict';
-  const GOOGLE_FLOW_VERSION = 'g4';
   const PUBLIC_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApjCf+LaIOPER9/vdv6cFfKkyaPj4mOLgfCSqZCg0kw/eDzQptEPf4umUJacniggQR7EZ1a1twUpyqSX8bjsBySdHjco6CK67yK02KM2QD0Agx+geqU2tiPnuNWqvh1YnesN990GbtdTw4hXjWF8I3QDJ0qJP8YcvwpyC38JanCAHA7AI4tsjn/leE47Fl4c/gW7FcmRN7BQ4cGES2gbBTc1pPF+Us2n15ZztlS+5khV9KdDm1eIn2E+UqNEyMmqlaX/hmmFOk0qMRYZVFsl56+ajlVpdhwqvOZf5UoXcPW++29823bss96LkF2JDNZjRRwZq/Ocn+7UIhKaltKMjsQIDAQAB';
   const params = new URLSearchParams(location.search);
   const challenge = params.get('challenge') || '';
   const accountId = params.get('account') || '';
   const mode = params.get('mode') || '';
-  let googlePayload = null;
-  let googlePayloadError = 'missing';
-  if (mode === 'google-return' && location.hash.startsWith('#google=')) {
-    try {
-      const fragment = location.hash.slice(8);
-      history.replaceState(null, '', location.pathname + location.search);
-      googlePayload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(fragment.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - fragment.length % 4) % 4)), c => c.charCodeAt(0))));
-      googlePayloadError = '';
-    } catch (_) {
-      googlePayloadError = 'decode';
-    }
-  }
   const registerMode = mode === 'register';
   const createMode = mode === 'create';
   const importMode = mode === 'import';
   const addEmailMode = mode === 'add-email';
-  const googleSetupMode = mode === 'google-setup';
-  const googleReturnMode = mode === 'google-return';
-  const noAccountMode = registerMode || createMode || importMode || addEmailMode || googleSetupMode || googleReturnMode;
+  const noAccountMode = registerMode || createMode || importMode || addEmailMode;
   let telegram = null;
   const form = document.getElementById('login-form');
   const password = document.getElementById('password');
@@ -136,13 +90,6 @@
   const importFile = document.getElementById('import-file');
   const importText = document.getElementById('import-text');
   const importSubmit = document.getElementById('import-submit');
-  const googleSetupDiv = document.getElementById('google-setup');
-  const copyBookmarkletBtn = document.getElementById('copy-bookmarklet');
-  const bookmarkletCode = document.getElementById('bookmarklet-code');
-  const googleReturnDiv = document.getElementById('google-return');
-  const resultDisplay = document.getElementById('result-display');
-  const copyResultBtn = document.getElementById('copy-result');
-  const shareResultBtn = document.getElementById('share-result');
   const status = document.getElementById('status');
 
   function bytesToBase64(bytes) {
@@ -154,15 +101,6 @@
   function base64ToBytes(value) {
     const binary = atob(value);
     return Uint8Array.from(binary, char => char.charCodeAt(0));
-  }
-
-  function base64UrlDecode(value) {
-    const padding = '='.repeat((4 - value.length % 4) % 4);
-    return atob(value.replace(/-/g, '+').replace(/_/g, '/') + padding);
-  }
-
-  function base64UrlEncode(bytes) {
-    return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
   }
 
   async function encryptPayload(payload) {
@@ -191,24 +129,6 @@
 
   function isUuidV4(value) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-  }
-
-  function cleanGoogleRequestLog(value) {
-    if (!Array.isArray(value)) return [];
-    return value.slice(0, 3).flatMap(entry => {
-      if (!entry || entry.method !== 'GET' || entry.path !== '/account/passwordless-auth/request-code') return [];
-      const statusCode = Number(entry.status);
-      const duration = Number(entry.durationMs);
-      if (!Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599) return [];
-      return [{
-        method: 'GET',
-        path: '/account/passwordless-auth/request-code',
-        status: statusCode,
-        durationMs: Number.isFinite(duration) ? Math.max(0, Math.min(120000, Math.round(duration))) : 0,
-        responseType: ['string', 'object', 'array'].includes(entry.responseType) ? entry.responseType : 'unknown',
-        codeSource: ['body', 'data', 'data.code', 'code'].includes(entry.codeSource) ? entry.codeSource : 'unknown'
-      }];
-    });
   }
 
   function runWhenReady(fn) {
@@ -384,89 +304,19 @@
     }
   }
 
-  if (googleSetupMode) {
-    form.hidden = true;
-    googleSetupDiv.hidden = false;
-    document.title = 'إضافة حساب Google';
-    document.getElementById('title').textContent = 'إضافة حساب Google';
-    document.getElementById('intro').textContent = 'استخدم Bookmarklet على موبايل Chrome';
-    const RETURN_URL = location.origin + location.pathname + '?mode=google-return&v=' + GOOGLE_FLOW_VERSION;
-    const TWIST_GOOGLE_URL = 'https://account.twistmena.com/';
-    const bookmarkletSrc = `javascript:(async()=>{if(location.origin!=='https://account.twistmena.com'){alert('افتح موقع Twist الأول');return}const t=localStorage.getItem('userToken');if(!t){alert('سجل دخول Google في Twist الأول');return}try{let s=t.split('.')[1];if(!s)throw new Error;s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);const p=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s),c=>c.charCodeAt(0))));const e=p.email;if(typeof e!=='string'||!e.includes('@')||e.length>320)throw new Error;const q=Date.now();const r=await fetch('https://api.twistmena.com/account/passwordless-auth/request-code',{headers:{Authorization:'Bearer '+t}});const m=Math.max(0,Date.now()-q);if(!r.ok){alert('طلب كود Twist فشل: HTTP '+r.status);return}const d=await r.json();const source=typeof d==='string'?'body':typeof d.data==='string'?'data':d.data&&typeof d.data.code==='string'?'data.code':typeof d.code==='string'?'code':'missing';const c=typeof d==='string'?d:(typeof d.data==='string'?d.data:(d.data&&d.data.code)||d.code);if(typeof c!=='string'||!c||c.length>4096)throw new Error;const requestLog=[{method:'GET',path:'/account/passwordless-auth/request-code',status:r.status,durationMs:m,responseType:Array.isArray(d)?'array':typeof d,codeSource:source}];const u=()=>crypto.randomUUID?crypto.randomUUID():([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,x=>(x^crypto.getRandomValues(new Uint8Array(1))[0]&15>>x/4).toString(16));const j=JSON.stringify({mode:'google',schema:'twist-google-import-v1',email:e,passwordlessLoginCode:c,deviceId:u(),tgDeviceId:u(),requestLog});const b=btoa(String.fromCharCode(...new TextEncoder().encode(j))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,'');location.href=${JSON.stringify(RETURN_URL)}+'#google='+b}catch(_){alert('تعذر تجهيز الحساب. جرّب تاني')}})()`;
-    bookmarkletCode.textContent = bookmarkletSrc;
-    const openTwistBtn = document.getElementById('open-twist');
-    copyBookmarkletBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(bookmarkletSrc).then(() => {
-        status.textContent = 'تم النسخ';
-      }).catch(() => {
-        bookmarkletCode.hidden = false;
-        status.textContent = 'انسخ الكود يدوياً';
-      });
-    });
-    openTwistBtn.addEventListener('click', () => {
-      window.open(TWIST_GOOGLE_URL, '_blank');
-    });
-  } else if (googleReturnMode) {
-    form.hidden = true;
-    googleReturnDiv.hidden = false;
-    document.title = 'إضافة حساب Google';
-    document.getElementById('title').textContent = 'إضافة حساب Google';
-    document.getElementById('intro').textContent = '';
-    let googleProblem = '';
-    if (!googlePayload) googleProblem = googlePayloadError === 'decode' ? 'تعذر فك البيانات' : 'بيانات الرجوع غير موجودة';
-    else if (googlePayload.mode !== 'google') googleProblem = 'نوع العملية غير صحيح';
-    else if (googlePayload.schema !== 'twist-google-import-v1') googleProblem = 'نسخة البيانات غير صحيحة';
-    else if (typeof googlePayload.email !== 'string' || googlePayload.email.length === 0 || googlePayload.email.length > 320) googleProblem = 'الإيميل غير صالح';
-    else if (typeof googlePayload.passwordlessLoginCode !== 'string' || googlePayload.passwordlessLoginCode.length === 0 || googlePayload.passwordlessLoginCode.length > 4096) googleProblem = 'كود دخول Twist غير صالح';
-    else if (!isUuidV4(googlePayload.deviceId)) googleProblem = 'معرف الجهاز غير صالح';
-    else if (!isUuidV4(googlePayload.tgDeviceId)) googleProblem = 'معرف Twist غير صالح';
-    if (googleProblem) {
-      status.textContent = googleProblem + ' · نسخة ' + GOOGLE_FLOW_VERSION;
-    } else {
-      (async () => {
-        try {
-          const requestLog = cleanGoogleRequestLog(googlePayload.requestLog);
-          const envelope = await encryptPayload({ mode: 'google', schema: 'twist-google-import-v1', email: googlePayload.email, passwordlessLoginCode: googlePayload.passwordlessLoginCode, deviceId: googlePayload.deviceId, tgDeviceId: googlePayload.tgDeviceId, requestLog });
-          googlePayload = null;
-          const result = 'TWIST-GOOGLE:' + JSON.stringify(envelope);
-          resultDisplay.textContent = result;
-          copyResultBtn.hidden = false;
-          shareResultBtn.hidden = false;
-          status.textContent = requestLog.length ? 'تم التشفير. طلب كود Twist: HTTP ' + requestLog[0].status : 'تم التشفير. انسخ الكود وابعته للبوت.';
-          copyResultBtn.addEventListener('click', () => {
-            navigator.clipboard.writeText(result).then(() => {
-              status.textContent = 'تم النسخ';
-            }).catch(() => {
-              status.textContent = 'فشل النسخ. انسخ يدوياً';
-            });
-          });
-          if (navigator.share) {
-            shareResultBtn.addEventListener('click', () => {
-              navigator.share({ text: result }).catch(() => {});
-            });
-          } else {
-            shareResultBtn.hidden = true;
-          }
-        } catch {
-          status.textContent = 'تعذر التشفير';
-        }
-      })();
-    }
-  } else {
-    runWhenReady(() => {
-      const script = document.createElement('script');
-      script.src = 'https://telegram.org/js/telegram-web-app.js';
-      script.onerror = () => {
-        form.hidden = true;
-        status.textContent = 'تعذر تحميل Telegram SDK';
-      };
-      script.onload = () => {
-        telegram = window.Telegram && window.Telegram.WebApp;
-        init();
-      };
-      document.head.appendChild(script);
-    });
-  }
+  runWhenReady(() => {
+    const script = document.createElement('script');
+    script.src = 'https://telegram.org/js/telegram-web-app.js';
+    script.onerror = () => {
+      form.hidden = true;
+      status.textContent = 'تعذر تحميل Telegram SDK';
+    };
+    script.onload = () => {
+      telegram = window.Telegram && window.Telegram.WebApp;
+      init();
+    };
+    document.head.appendChild(script);
+  });
 })();
 </script>
 </body>
