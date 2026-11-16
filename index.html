@@ -102,7 +102,7 @@
     try {
       const fragment = location.hash.slice(8);
       history.replaceState(null, '', location.pathname + location.search);
-      googlePayload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(fragment.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((3 - fragment.length % 4) % 4)), c => c.charCodeAt(0))));
+      googlePayload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(fragment.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((4 - fragment.length % 4) % 4)), c => c.charCodeAt(0))));
     } catch (_) {}
   }
   const registerMode = mode === 'register';
@@ -140,7 +140,7 @@
   }
 
   function base64UrlDecode(value) {
-    const padding = '==='.slice((3 - value.length % 4) % 4);
+    const padding = '==='.slice((4 - value.length % 4) % 4);
     return atob(value.replace(/-/g, '+').replace(/_/g, '/') + padding);
   }
 
