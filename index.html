@@ -55,6 +55,13 @@
     <input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required autofocus>
     <button id="submit" type="submit">تسجيل الدخول</button>
   </form>
+  <form id="add-email-form" hidden>
+    <label for="add-email">الإيميل</label>
+    <input id="add-email" name="email" type="email" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="320" required>
+    <label for="add-email-password">الباسورد</label>
+    <input id="add-email-password" name="password" type="password" autocomplete="current-password" maxlength="256" required>
+    <button id="add-email-submit" type="submit">إضافة وتسجيل الدخول</button>
+  </form>
   <form id="import-form" hidden>
     <label for="import-file">ملف الحسابات (JSON)</label>
     <input id="import-file" name="import-file" type="file" accept=".json,application/json">
@@ -113,13 +120,18 @@
   const registerMode = mode === 'register';
   const createMode = mode === 'create';
   const importMode = mode === 'import';
+  const addEmailMode = mode === 'add-email';
   const googleSetupMode = mode === 'google-setup';
   const googleReturnMode = mode === 'google-return';
-  const noAccountMode = registerMode || createMode || importMode || googleSetupMode || googleReturnMode;
+  const noAccountMode = registerMode || createMode || importMode || addEmailMode || googleSetupMode || googleReturnMode;
   let telegram = null;
   const form = document.getElementById('login-form');
   const password = document.getElementById('password');
   const submit = document.getElementById('submit');
+  const addEmailForm = document.getElementById('add-email-form');
+  const addEmailInput = document.getElementById('add-email');
+  const addEmailPassword = document.getElementById('add-email-password');
+  const addEmailSubmit = document.getElementById('add-email-submit');
   const importForm = document.getElementById('import-form');
   const importFile = document.getElementById('import-file');
   const importText = document.getElementById('import-text');
@@ -224,6 +236,32 @@
       document.getElementById('title').textContent = 'إنشاء حساب إيميل';
       document.getElementById('intro').textContent = 'الباسورد يتشفر داخل موبايلك قبل الإرسال، ويتحفظ مشفر بعد التسجيل.';
       submit.textContent = 'إنشاء الحساب';
+    }
+    if (addEmailMode) {
+      form.hidden = true;
+      addEmailForm.hidden = false;
+      document.title = 'إضافة حساب إيميل';
+      document.getElementById('title').textContent = 'إضافة حساب إيميل';
+      document.getElementById('intro').textContent = 'الإيميل والباسورد يتشفروا داخل موبايلك قبل الإرسال، والباسورد يتحفظ مشفر بعد الدخول.';
+      addEmailForm.addEventListener('submit', async event => {
+        event.preventDefault();
+        const emailValue = addEmailInput.value.trim().toLowerCase();
+        const passwordValue = addEmailPassword.value;
+        if (!emailValue || !passwordValue) return;
+        addEmailSubmit.disabled = true;
+        status.textContent = 'جاري تشفير البيانات...';
+        try {
+          const envelope = await encryptPayload({ challenge, mode: 'add-email', email: emailValue, password: passwordValue });
+          addEmailInput.value = '';
+          addEmailPassword.value = '';
+          telegram.sendData(JSON.stringify(envelope));
+          status.textContent = 'تم الإرسال. ارجع للبوت.';
+          setTimeout(() => telegram.close(), 400);
+        } catch (_) {
+          status.textContent = 'تعذر التشفير. اقفل الصفحة وجرب تاني.';
+          addEmailSubmit.disabled = false;
+        }
+      });
     }
     if (importMode) {
       form.hidden = true;
