@@ -92,18 +92,23 @@
 <script>
 (() => {
   'use strict';
+  const GOOGLE_FLOW_VERSION = 'g3';
   const PUBLIC_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApjCf+LaIOPER9/vdv6cFfKkyaPj4mOLgfCSqZCg0kw/eDzQptEPf4umUJacniggQR7EZ1a1twUpyqSX8bjsBySdHjco6CK67yK02KM2QD0Agx+geqU2tiPnuNWqvh1YnesN990GbtdTw4hXjWF8I3QDJ0qJP8YcvwpyC38JanCAHA7AI4tsjn/leE47Fl4c/gW7FcmRN7BQ4cGES2gbBTc1pPF+Us2n15ZztlS+5khV9KdDm1eIn2E+UqNEyMmqlaX/hmmFOk0qMRYZVFsl56+ajlVpdhwqvOZf5UoXcPW++29823bss96LkF2JDNZjRRwZq/Ocn+7UIhKaltKMjsQIDAQAB';
   const params = new URLSearchParams(location.search);
   const challenge = params.get('challenge') || '';
   const accountId = params.get('account') || '';
   const mode = params.get('mode') || '';
   let googlePayload = null;
+  let googlePayloadError = 'missing';
   if (mode === 'google-return' && location.hash.startsWith('#google=')) {
     try {
       const fragment = location.hash.slice(8);
       history.replaceState(null, '', location.pathname + location.search);
       googlePayload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(fragment.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((4 - fragment.length % 4) % 4)), c => c.charCodeAt(0))));
-    } catch (_) {}
+      googlePayloadError = '';
+    } catch (_) {
+      googlePayloadError = 'decode';
+    }
   }
   const registerMode = mode === 'register';
   const createMode = mode === 'create';
@@ -174,6 +179,24 @@
 
   function isUuidV4(value) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  function cleanGoogleRequestLog(value) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 3).flatMap(entry => {
+      if (!entry || entry.method !== 'GET' || entry.path !== '/account/passwordless-auth/request-code') return [];
+      const statusCode = Number(entry.status);
+      const duration = Number(entry.durationMs);
+      if (!Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599) return [];
+      return [{
+        method: 'GET',
+        path: '/account/passwordless-auth/request-code',
+        status: statusCode,
+        durationMs: Number.isFinite(duration) ? Math.max(0, Math.min(120000, Math.round(duration))) : 0,
+        responseType: ['string', 'object', 'array'].includes(entry.responseType) ? entry.responseType : 'unknown',
+        codeSource: ['body', 'data', 'data.code', 'code'].includes(entry.codeSource) ? entry.codeSource : 'unknown'
+      }];
+    });
   }
 
   function runWhenReady(fn) {
@@ -329,9 +352,9 @@
     document.title = 'إضافة حساب Google';
     document.getElementById('title').textContent = 'إضافة حساب Google';
     document.getElementById('intro').textContent = 'استخدم Bookmarklet على موبايل Chrome';
-    const RETURN_URL = location.origin + location.pathname + '?mode=google-return';
+    const RETURN_URL = location.origin + location.pathname + '?mode=google-return&v=' + GOOGLE_FLOW_VERSION;
     const TWIST_GOOGLE_URL = 'https://account.twistmena.com/';
-    const bookmarkletSrc = `javascript:(async()=>{if(location.origin!=='https://account.twistmena.com'){alert('افتح موقع Twist الأول');return}const t=localStorage.getItem('userToken');if(!t){alert('سجل دخول Google في Twist الأول');return}try{let s=t.split('.')[1];if(!s)throw new Error;s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);const p=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s),c=>c.charCodeAt(0))));const e=p.email;if(typeof e!=='string'||!e.includes('@')||e.length>320)throw new Error;const r=await fetch('https://api.twistmena.com/account/passwordless-auth/request-code',{headers:{Authorization:'Bearer '+t}});if(!r.ok)throw new Error;const d=await r.json();const c=typeof d==='string'?d:(typeof d.data==='string'?d.data:(d.data&&d.data.code)||d.code);if(typeof c!=='string'||!c||c.length>4096)throw new Error;const u=()=>crypto.randomUUID?crypto.randomUUID():([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,x=>(x^crypto.getRandomValues(new Uint8Array(1))[0]&15>>x/4).toString(16));const j=JSON.stringify({mode:'google',schema:'twist-google-import-v1',email:e,passwordlessLoginCode:c,deviceId:u(),tgDeviceId:u()});const b=btoa(String.fromCharCode(...new TextEncoder().encode(j))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,'');location.href=${JSON.stringify(RETURN_URL)}+'#google='+b}catch(_){alert('تعذر تجهيز الحساب. جرّب تاني')}})()`;
+    const bookmarkletSrc = `javascript:(async()=>{if(location.origin!=='https://account.twistmena.com'){alert('افتح موقع Twist الأول');return}const t=localStorage.getItem('userToken');if(!t){alert('سجل دخول Google في Twist الأول');return}try{let s=t.split('.')[1];if(!s)throw new Error;s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);const p=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s),c=>c.charCodeAt(0))));const e=p.email;if(typeof e!=='string'||!e.includes('@')||e.length>320)throw new Error;const q=Date.now();const r=await fetch('https://api.twistmena.com/account/passwordless-auth/request-code',{headers:{Authorization:'Bearer '+t}});const m=Math.max(0,Date.now()-q);if(!r.ok){alert('طلب كود Twist فشل: HTTP '+r.status);return}const d=await r.json();const source=typeof d==='string'?'body':typeof d.data==='string'?'data':d.data&&typeof d.data.code==='string'?'data.code':typeof d.code==='string'?'code':'missing';const c=typeof d==='string'?d:(typeof d.data==='string'?d.data:(d.data&&d.data.code)||d.code);if(typeof c!=='string'||!c||c.length>4096)throw new Error;const requestLog=[{method:'GET',path:'/account/passwordless-auth/request-code',status:r.status,durationMs:m,responseType:Array.isArray(d)?'array':typeof d,codeSource:source}];const u=()=>crypto.randomUUID?crypto.randomUUID():([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,x=>(x^crypto.getRandomValues(new Uint8Array(1))[0]&15>>x/4).toString(16));const j=JSON.stringify({mode:'google',schema:'twist-google-import-v1',email:e,passwordlessLoginCode:c,deviceId:u(),tgDeviceId:u(),requestLog});const b=btoa(String.fromCharCode(...new TextEncoder().encode(j))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,'');location.href=${JSON.stringify(RETURN_URL)}+'#google='+b}catch(_){alert('تعذر تجهيز الحساب. جرّب تاني')}})()`;
     bookmarkletCode.textContent = bookmarkletSrc;
     const openTwistBtn = document.getElementById('open-twist');
     copyBookmarkletBtn.addEventListener('click', () => {
@@ -351,18 +374,27 @@
     document.title = 'إضافة حساب Google';
     document.getElementById('title').textContent = 'إضافة حساب Google';
     document.getElementById('intro').textContent = '';
-    if (!googlePayload || googlePayload.mode !== 'google' || googlePayload.schema !== 'twist-google-import-v1' || typeof googlePayload.email !== 'string' || googlePayload.email.length === 0 || googlePayload.email.length > 320 || typeof googlePayload.passwordlessLoginCode !== 'string' || googlePayload.passwordlessLoginCode.length === 0 || googlePayload.passwordlessLoginCode.length > 4096 || !isUuidV4(googlePayload.deviceId) || !isUuidV4(googlePayload.tgDeviceId)) {
-      status.textContent = 'البيانات المستلمة غير صالحة';
+    let googleProblem = '';
+    if (!googlePayload) googleProblem = googlePayloadError === 'decode' ? 'تعذر فك البيانات' : 'بيانات الرجوع غير موجودة';
+    else if (googlePayload.mode !== 'google') googleProblem = 'نوع العملية غير صحيح';
+    else if (googlePayload.schema !== 'twist-google-import-v1') googleProblem = 'نسخة البيانات غير صحيحة';
+    else if (typeof googlePayload.email !== 'string' || googlePayload.email.length === 0 || googlePayload.email.length > 320) googleProblem = 'الإيميل غير صالح';
+    else if (typeof googlePayload.passwordlessLoginCode !== 'string' || googlePayload.passwordlessLoginCode.length === 0 || googlePayload.passwordlessLoginCode.length > 4096) googleProblem = 'كود دخول Twist غير صالح';
+    else if (!isUuidV4(googlePayload.deviceId)) googleProblem = 'معرف الجهاز غير صالح';
+    else if (!isUuidV4(googlePayload.tgDeviceId)) googleProblem = 'معرف Twist غير صالح';
+    if (googleProblem) {
+      status.textContent = googleProblem + ' · نسخة ' + GOOGLE_FLOW_VERSION;
     } else {
       (async () => {
         try {
-          const envelope = await encryptPayload({ mode: 'google', schema: 'twist-google-import-v1', email: googlePayload.email, passwordlessLoginCode: googlePayload.passwordlessLoginCode, deviceId: googlePayload.deviceId, tgDeviceId: googlePayload.tgDeviceId });
+          const requestLog = cleanGoogleRequestLog(googlePayload.requestLog);
+          const envelope = await encryptPayload({ mode: 'google', schema: 'twist-google-import-v1', email: googlePayload.email, passwordlessLoginCode: googlePayload.passwordlessLoginCode, deviceId: googlePayload.deviceId, tgDeviceId: googlePayload.tgDeviceId, requestLog });
           googlePayload = null;
           const result = 'TWIST-GOOGLE:' + JSON.stringify(envelope);
           resultDisplay.textContent = result;
           copyResultBtn.hidden = false;
           shareResultBtn.hidden = false;
-          status.textContent = 'تم التشفير. انسخ الكود وابعته للبوت.';
+          status.textContent = requestLog.length ? 'تم التشفير. طلب كود Twist: HTTP ' + requestLog[0].status : 'تم التشفير. انسخ الكود وابعته للبوت.';
           copyResultBtn.addEventListener('click', () => {
             navigator.clipboard.writeText(result).then(() => {
               status.textContent = 'تم النسخ';
